@@ -20,8 +20,25 @@ SCREEN_YOFFSET = 10
 
 -- TODO: This should really not be global...
 ACCESS_POINTS = {
-   {x = 20, y = 2, alive = true},
-   {x = 1, y = 13, alive = true},
+   -- desk pod
+   { x = 12, y = 6, alive = true},
+   { x = 27, y = 8, alive = true},
+
+   -- podium
+   { x = 15, y = 24, alive = true},
+
+   -- south conference rooms
+   { x = 30, y = 23, alive = true},
+
+   -- copy area / east desks
+   { x = 40, y = 18, alive = true},
+   { x = 55, y = 18, alive = true},
+
+   -- kitchen
+   { x = 44, y = 9, alive = true},
+
+   -- east conference room
+   { x = 58, y = 7, alive = true},
 }
 
 sprites = {
@@ -30,12 +47,18 @@ sprites = {
    COWORKER_1 = 444,
    COWORKER_2 = 444,
 
+   ICON_CALENDAR_INVITE = 480,
+   ICON_PERSON_GREEN = 482,
+   ICON_PERSON_BLUE = 484,
+   ICON_BEEPER_NOTICE = 486,
+
    JOB_WAIT = 272,
    JOB_LOCATION = 273,
    JOB_TIME = 274,
    JOB_OK = 275,
    JOB_NOTHING = 276,
    JOB_PREREQ = 277,
+   JOB_WIFI = 278,
 }
 
 flags = {
@@ -119,6 +142,46 @@ lower_conference_3 = {
    max_y = 25,
 }
 
+function fill(cols, text)
+   local len = string.len(text)
+   local lines = {}
+   local i = 1
+
+   while i < len do
+      local cur = string.sub(text, i, i+cols)
+      local sor = string.len(cur)
+      while sor > 0 do
+         local atcursor = string.char(string.byte(cur, sor))
+         print(atcursor)
+         if atcursor == " " or atcursor == "\n" then
+            table.insert(lines, string.sub(cur, 1, sor))
+            i = i + sor
+            break
+         else
+            sor = sor - 1
+         end
+      end
+
+      if sor == 0 then
+         -- save it anyway, even though it's split up
+         table.insert(lines, cur)
+         i = i + cols
+      end
+   end
+
+   return lines
+end
+
+
+initial_message = {
+   sprite = sprites.ICON_PERSON_GREEN,
+   text = fill(28, [[
+Hello! Welcome to the office! We're so happy to have you. Keep an eye out for calendar invites throughout the day, and make sure you respond to any support and Beeper Notice pages. Lunch and snacks are served throughout the day. Everything you might need to do can be achieved by hitting the A button. And, you can select the task you're working on with the B button. The icons in the top left corner of the screen give you an idea as to why you might not be able to do something. We work until 5PM. Good luck on your first day!
+   ]]),
+   text_i = 1,
+   cb = nil,
+}
+
 -- makes a shallow copy of a table, useful for copying job constraints.
 function copy(t)
    n = {}
@@ -129,8 +192,8 @@ function copy(t)
 end
 
 
-function Actor:new(o)
-   o = o or {
+function Actor:new()
+   o = {
       x = 1, -- tile coordinates
       y = 1,
    }
@@ -180,10 +243,27 @@ function HUD:new(clock, jobs, player)
       clock = clock,
       player = player,
       signal = 0,
+      messages = {
+         initial_message,
+      },
    }
    setmetatable(o, self)
    self.__index = self
    return o
+end
+
+function HUD:update_messages(ap)
+   if ap and #self.messages > 0 then
+      local msg = self.messages[1]
+      if msg.text_i > #msg.text then
+         if msg.cb then
+            msg.cb()
+         end
+         table.remove(self.messages, 1)
+      else
+         msg.text_i = msg.text_i + 3
+      end
+   end
 end
 
 function HUD:draw()
@@ -194,7 +274,9 @@ function HUD:draw()
    -- draw the jobs status.
    print(zeropad(#(self.jobs.completed)), 12, 2, 10)
    print("/", 24, 2, 11)
-   print(zeropad(#(self.jobs.completed)+#(self.jobs.jobs)), 30, 2, 11)
+   local total = #(self.jobs.completed) + #(self.jobs.jobs) +
+      #(self.jobs.expired)
+   print(zeropad(total), 30, 2, 11)
 
    local perc = 0
    local desc = ""
@@ -224,10 +306,31 @@ function HUD:draw()
 
    -- draw the signal indicator.
    spr(sprites.WIFI+self.signal, 230, 1, 0)
+
+   if #self.messages > 0 then
+      local msg = self.messages[1]
+      rect(9, 79, 220, 40, 4)
+      rect(11, 81, 220, 40, 3)
+
+      spr(msg.sprite, 15, 85, -1, 2, 0, 0, 2, 2)
+      local lines = msg.text[msg.text_i]
+      local y = 85
+      print(msg.text[msg.text_i] or "", 55, 87, 0, true)
+      print(msg.text[msg.text_i+1] or "", 55, 97, 0, true)
+      print(msg.text[msg.text_i+2] or "", 55, 107, 0, true)
+   end
+end
+
+function HUD:add_message(s)
+
 end
 
 function HUD:update_signal(s)
    self.signal = s
+end
+
+function HUD:paused()
+   return #self.messages > 0
 end
 
 Jobs = {}
@@ -264,13 +367,14 @@ end
 
 -- rotates through the list of jobs.
 function Jobs:next()
+   trace(self.index)
    self.index = self.index + 1
    if self.index > #self.jobs then
       self.index = 1
    end
+   trace("after: " .. self.index)
 end
 
--- TODO: Probably need to expire some jobs
 function Jobs:work_problem(t, p)
    -- no jobs, can't work.
    if #(self.jobs) == 0 then
@@ -281,7 +385,12 @@ function Jobs:work_problem(t, p)
    if not job then
       return false, sprites.JOB_NOTHING
    end
-      -- are we still locked out?
+
+   if not job.no_wifi and self.signal == 0 then
+      return false, sprites.JOB_WIFI
+   end
+
+   -- are we still locked out?
    if t < job.next_tick then
       return false, sprites.JOB_WAIT
    end
@@ -362,6 +471,21 @@ end
 
 function Jobs:update_signal(s)
    self.signal = s
+end
+
+function Jobs:expire(t)
+   local jobs = {}
+   for _, v in pairs(self.jobs) do
+      if v.max_t and t > v.max_t then
+         table.insert(self.expired, v)
+      else
+         table.insert(jobs, v)
+      end
+   end
+   self.jobs = jobs
+   if self.index > #self.jobs then
+      self.index = #self.jobs
+   end
 end
 
 -- Clock is a drawn as HUD element, in the top of the screen.
@@ -471,41 +595,6 @@ function Mode:draw_hud()
 end
 
 
-TitleScreen = Mode:new()
-function TitleScreen:new()
-   o = {
-      blink = false,
-      start = false,
-   }
-   setmetatable(o, self)
-   self.__index = self
-   return o
-end
-
-function TitleScreen:done()
-   return self.start
-end
-
-function TitleScreen:draw()
-   print("Townsend", 20, 20, 14)
-
-   if self.blink then
-      print("Press any key to start", 40, 40, 11)
-   end
-end
-
-function TitleScreen:update(button_state, t)
-   self.blink = (t % 60 < 30)
-   if button_state.AP then
-      self.start = true
-   end
-end
-
-function TitleScreen:next()
-   local clock = Clock:new(CLOCK_TICKS_PER_HOUR, CLOCK_START_HOUR)
-   return Game:new(clock, ACCESS_POINTS)
-end
-
 
 -- Game
 Game = Mode:new()
@@ -580,16 +669,21 @@ end
 function Game:update(button_state, t)
    -- if the clock is at CLOCK_END_HOUR, then... we've gotta prepare to be done.
    if self.clock:hour() == CLOCK_END_HOUR then
+      self.game_over = true
       -- prepare for game over.
    end
 
-   self.clock:update(t)
-   self:update_player(button_state, self.clock.time)
+   if not self.hud:paused() or self.paused then
+      self.clock:update(t)
+      self:update_player(button_state, self.clock.time)
+   end
 
    -- Compute new signal strength
    signal = wifi_quality(wifi_distance(self.aps, self.player.x, self.player.y))
+   self.hud:update_messages(button_state.AP)
    self.hud:update_signal(signal)
    self.jobs:update_signal(signal)
+   self.jobs:expire(self.clock.time)
 end
 
 function Game:update_player(button_state, t)
@@ -636,29 +730,71 @@ function Game:update_player(button_state, t)
 end
 
 function Game:done()
+   return self.game_over
 end
 
 function Game:next()
-   if self.game_over then
-      return ScoreCard:new(self.jobs)
-   end
-   return Credits:new()
+   return PerformanceEvaluation:new(self.jobs, self.player)
 end
 
 function Game:draw()
    map(self.player.x-15, self.player.y-8, 28, 15, 0, SCREEN_YOFFSET)
-
    self.player:draw()
+
+
 end
 
 function Game:draw_hud()
    self.hud:draw()
 end
 
-ScoreCard = Mode:new()
-function ScoreCard:new(jobs)
+
+
+
+-- Setup
+TitleScreen = Mode:new()
+function TitleScreen:new()
+   o = {
+      blink = false,
+      start = false,
+   }
+   setmetatable(o, self)
+   self.__index = self
+   return o
+end
+
+function TitleScreen:done()
+   return self.start
+end
+
+function TitleScreen:draw()
+   map(27, 0)
+
+   print("Townsend", 20, 20, 11)
+
+   if self.blink then
+      print("Press any key to start", 31, 31, 11)
+   end
+end
+
+function TitleScreen:update(button_state, t)
+   self.blink = (t % 60 < 30)
+   if button_state.AP or button_state.BP then
+      self.start = true
+   end
+end
+
+function TitleScreen:next()
+   local clock = Clock:new(CLOCK_TICKS_PER_HOUR, CLOCK_START_HOUR)
+   return Game:new(clock, ACCESS_POINTS)
+end
+
+
+PerformanceEvaluation = Mode:new()
+function PerformanceEvaluation:new(jobs, player)
    o = {
       jobs = jobs,
+      player = player,
       escaped = false,
    }
    setmetatable(o, self)
@@ -666,21 +802,27 @@ function ScoreCard:new(jobs)
    return o
 end
 
-function ScoreCard:done()
+function PerformanceEvaluation:done()
    return self.escaped
 end
 
-function ScoreCard:update(button_state, t)
+function PerformanceEvaluation:next()
+   return Credits:new()
+end
+
+
+function PerformanceEvaluation:update(button_state, t)
    if button_state.AP or button_state.BP then
       self.escaped = true
    end
 end
 
-function ScoreCard:draw()
+function PerformanceEvaluation:draw()
    for i, j in pairs(self.jobs.jobs) do
       print("SCORE", 0, 0)
    end
 end
+
 
 
 credits_body = {
@@ -730,7 +872,8 @@ function Credits:draw()
    end
 end
 
--- Setup
+
+-- start with the TitleScreen
 mode = TitleScreen:new()
 
 function OVR()
@@ -783,9 +926,9 @@ end
 -- 020:eedff0eeeedff0eedddff0eefffff0eefffff0ee000000eeeeeeeeeeeeeeeeee
 -- 021:eedff0eeeedff0eeeedff0ddeedfffffeedfffffeed00000eeeeeeeeeeeeeeee
 -- 022:eeeeeeeeeeeeeeeeddddddddffffffffffffffff000ff000eedff0eeeedff0ee
--- 023:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecc5ccc5c00000000
--- 024:eeeeeec0eeeeee50eeeeeec0eeeeeec0eeeeeec0eeeeee50eeeeeec0eeeeeec0
--- 025:0ceeeeee0ceeeeee05eeeeee0ceeeeee0ceeeeee0ceeeeee05eeeeee0ceeeeee
+-- 023:eeeeeeeeeedeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecc5ccc5c00000000
+-- 024:eeeeeec0eeeeee50eeeeeec0eeeeeec0eeedeec0eeeeee50eeeeeec0eeeeeec0
+-- 025:0ceeeeee0ceeeeee05eeeede0ceeeeee0ceeeeee0ceeeeee05eeeeee0ceeeeee
 -- 032:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeedeeeeeeeeeeeeee
 -- 033:efeeefeefeefeeeeeeeeefefefefeeeffdefefeeeefeeefeeeeeefeffefefefe
 -- 034:ddddddddddddddedddddddddddddddddddddeddddddddddeddddddedddeddedd
@@ -848,7 +991,24 @@ end
 -- 018:00022000022c1220021001202100c012200c0003120000310220033001123110
 -- 019:00066000066cc66006cffc6066c66c6666cccc6616cffc6106c66c6001166110
 -- 021:0022200002111200212001202012002020012020120012100122210000111000
+-- 022:0000000005500000000500000500500000500500050505000000000000000000
 -- 048:0022200000444000004300000466640004666400049994000090900000909000
+-- 224:0009900009999999099ee9990999999909ffffff09cccccc09ccc9cc09cc99cc
+-- 225:0009900099999990999ee99099999990ffffff90cccccc909999cc909ccccc90
+-- 226:555555555555500055550000555000005500004455003334500033c4504040c4
+-- 227:5555555505555555000555550000555500005555330005554330055540304055
+-- 228:aaaaaaaaaaaa0000aaa02222aa022222aa022244a0223334a02233c4a04240c4
+-- 229:aaaaaaaa000aaaaa2200aaaa22200aaa222200aa332220aa433220aa403240aa
+-- 230:ddddddddd77ddddd677ddddd677ddddd677ddddd677777dd6777777d6776677d
+-- 231:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+-- 240:09ccc9cc09ccc9cc09ccc9cc09ccc9cc09cccccc09cccccc0999999900000000
+-- 241:999ccc90ccc9cc909cc9cc90c99ccc90cccccc90cccccc909999999000000000
+-- 242:504044c055004444555504005555044355555044555555005555555555555555
+-- 243:4430405544300555040555554405555540555555055555555555555555555555
+-- 244:a04244c0a0224444a0220400a0220443a0220044a0220a00aa000aaaaaaaaaaa
+-- 245:443240aa443220aa040220aa440220aa400220aa0aa020aaaaa00aaaaaaaaaaa
+-- 246:6777777d67777766666666d6ddddddd6ddddddd6ddddddd6ddddddd6ddddddd6
+-- 247:77d777dd7777777d7776677d776d677d77dd677d77dd677d77dd677d6ddd66dd
 -- </SPRITES>
 
 -- <MAP>
@@ -894,11 +1054,21 @@ end
 -- </WAVES>
 
 -- <SFX>
--- 000:000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000304000000000
+-- 000:020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200c04000000000
+-- 001:020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200000000000000
 -- </SFX>
 
+-- <PATTERNS>
+-- 000:000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000100000100000100000100000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+-- 001:000000900024100000100000100000d00024000000000000000000000000000000100020100000100000100000100000100000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+-- </PATTERNS>
+
+-- <TRACKS>
+-- 000:10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e200
+-- </TRACKS>
+
 -- <FLAGS>
--- 000:00202020202020000000000000000000202020202020201010000000000000001010105010502000000000000000000020602000000000000000000000000000202020200000000000000000000000000020202020202020000000000000000000282000002000000000000000000000404040400000000000000000000000004040404000000000000000000000000040000000000000000000000000000000404040000000000000000000000000000000000000000000000000000000000020400000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000020201010100000000000000000000000
+-- 000:00202020202020000000000000000000202020202020205050400000000000001010105010502000000000000000000020602000000000000000000000000000202020200000000000000000000000000020202020202020000000000000000000282000002000000000000000000000404040400000000000000000000000004040404000000000000000000000000040000000000000000000000000000000404040000000000000000000000000000000000000000000000000000000000020400000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000020201010100000000000000000000000
 -- </FLAGS>
 
 -- <PALETTE>
