@@ -50,7 +50,8 @@ sprites = {
    ICON_CALENDAR_INVITE = 480,
    ICON_PERSON_GREEN = 482,
    ICON_PERSON_BLUE = 484,
-   ICON_BEEPER_NOTICE = 486,
+   ICON_PERSON_GREYN = 486,
+   ICON_BEEPER_NOTICE = 488,
 
    JOB_WAIT = 272,
    JOB_LOCATION = 273,
@@ -190,7 +191,6 @@ function copy(t)
    end
    return n
 end
-
 
 function Actor:new()
    o = {
@@ -601,6 +601,35 @@ Game = Mode:new()
 function Game:new(clock, aps)
    local jobs = Jobs:new()
 
+   local notifications = {
+      -- Town hall.. 09:30 (30-45 minutes)
+      -- Weekly Town Hall. Have questions? We have answers. Post your questions to the "All Hands" Babbler feed.
+
+      -- Morning Snack.. 10:30
+      -- Morning snack is here for you!
+
+      -- Kickoff Meeting.. 11:00
+      -- Project Surefire Kickoff Meeting. I know this isn't a great time for everyone, but we need to get together and figure out how to proceed with the Surefire Project. What are our risks? What's our opportunity? Thanks!
+         -- Needs to add a few more issues.
+
+      -- Lunch.. Noon. (25 minutes)
+      -- Catered by Tacolicious Crepes. The menu today is Kale Salad and deconstructed Gazpacho.
+
+      -- Manager 1:1 13:00 (30 minutes)
+
+      -- Support ticket at 13:15 (should take a random amount of time.)
+      -- "Seeing weird things while trying to use Shoulda Queues" was assigned to you.
+
+      -- Afternoon snack .. 14:30
+      -- Afternoon snack!
+
+      -- Manager bug .. 15:54 --
+      -- Hey. I just had a 1:1 with Julien and he mentioned some weird behavior in the soft queue that you worked on 4 years ago. Anyway, I told him you'd take a look. Shouldn't take too long. I'd really appreciate it.
+
+      -- Paged at 16:34
+      -- "DOWN: Toldya is down since 16:29 -- 500 Internal Server Error on shoulda.seen.it.coming"
+   }
+
    -- standard jobs.
    jobs:add("issue #542", 5)
    jobs:add("issue #547", 8, {requires = "issue #542"})
@@ -608,6 +637,9 @@ function Game:new(clock, aps)
    local copier_opts = copy(copier_boundaries)
    copier_opts.no_wifi = true
    jobs:add("copy docs", 2, copier_opts)
+
+   jobs:add("scan expenses", 2, copier_opts)
+   jobs:add("file expenses", { requires = "scan expenses" })
 
    -- EATING
 
@@ -999,16 +1031,20 @@ end
 -- 227:5555555505555555000555550000555500005555330005554330055540304055
 -- 228:aaaaaaaaaaaa0000aaa02222aa022222aa022244a0223334a02233c4a04240c4
 -- 229:aaaaaaaa000aaaaa2200aaaa22200aaa222200aa332220aa433220aa403240aa
--- 230:ddddddddd77ddddd677ddddd677ddddd677ddddd677777dd6777777d6776677d
--- 231:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+-- 230:77777777777700007770ffff770fffff770fff4470ff333470ff33c4704f49c4
+-- 231:77777777000777775f007777ff500777ffff007733ff5077433ff077493f4077
+-- 232:ddddddddd77ddddd677ddddd677ddddd677ddddd677777dd6777777d6776677d
+-- 233:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 -- 240:09ccc9cc09ccc9cc09ccc9cc09ccc9cc09cccccc09cccccc0999999900000000
 -- 241:999ccc90ccc9cc909cc9cc90c99ccc90cccccc90cccccc909999999000000000
 -- 242:504044c055004444555504005555044355555044555555005555555555555555
 -- 243:4430405544300555040555554405555540555555055555555555555555555555
 -- 244:a04244c0a0224444a0220400a0220443a0220044a0220a00aa000aaaaaaaaaaa
 -- 245:443240aa443220aa040220aa440220aa400220aa0aa020aaaaa00aaaaaaaaaaa
--- 246:6777777d67777766666666d6ddddddd6ddddddd6ddddddd6ddddddd6ddddddd6
--- 247:77d777dd7777777d7776677d776d677d77dd677d77dd677d77dd677d6ddd66dd
+-- 246:70bf44c0700f4444777004007777042277770044777777007777777777777777
+-- 247:443fb077443ff077040f5077240ff077400f50770770f0777770077777777777
+-- 248:6777777d67777766666666d6ddddddd6ddddddd6ddddddd6ddddddd6ddddddd6
+-- 249:77d777dd7777777d7776677d776d677d77dd677d77dd677d77dd677d6ddd66dd
 -- </SPRITES>
 
 -- <MAP>
@@ -1074,3 +1110,4 @@ end
 -- <PALETTE>
 -- 000:1a1c2c5d275db13e53ef7d57ffca89a7f07038b76425717929366f3b5dc941a6f673eff7f4f4f494b0c2566c86333c57
 -- </PALETTE>
+
