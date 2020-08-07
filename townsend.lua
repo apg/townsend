@@ -3,7 +3,7 @@
 -- desc:   Get Work Done
 -- script: lua
 
-t = 0
+t = 3600 * 7
 
 -- number of tiles wifi can reach.
 WIFI_RANGE = 10
@@ -11,6 +11,7 @@ WIFI_MAX_QUALITY = 3
 CLOCK_TICKS_PER_HOUR = 3600
 CLOCK_START_HOUR = 9
 CLOCK_END_HOUR = 17
+FILL_COLUMN = 28
 
 -- (MAX_SIGNAL - signal) * JOB_LOCKOUT_TICKS
 JOB_LOCKOUT_TICKS = 60
@@ -73,13 +74,11 @@ flags = {
 Actor = {
    STANDING = 1,
    SITTING = 2,
-   TALKING = 3,
 
-   -- these are placeholders for when sprites actually exist to do offsets from.
-   LEFT = 10,
-   RIGHT = 11,
-   UP = 12,
-   DOWN = 13,
+   LEFT = {x = -1, y = 0},
+   RIGHT = {x = 1, y = 0},
+   UP = {x = 0, y = 1},
+   DOWN = {x = 0, y = -1},
 }
 
 kitchen_boundaries = {
@@ -145,6 +144,7 @@ lower_conference_3 = {
    max_y = 25,
 }
 
+-- fills text to cols on space boundaries.
 function fill(cols, text)
    local len = string.len(text)
    local lines = {}
@@ -178,7 +178,7 @@ end
 
 initial_message = {
    sprite = sprites.ICON_PERSON_GREEN,
-   text = fill(28, [[
+   text = fill(FILL_COLUMN, [[
 Hello! Welcome to the office! We're so happy to have you. Keep an eye out for calendar invites throughout the day, and make sure you respond to any support and Beeper Notice pages. Lunch and snacks are served throughout the day. Everything you might need to do can be achieved by hitting the A button. And, you can select the task you're working on with the B button. The icons in the top left corner of the screen give you an idea as to why you might not be able to do something. We work until 5PM. Good luck on your first day!
    ]]),
    text_i = 1,
@@ -223,7 +223,7 @@ function Player:can_work(t)
    return self.state == self.SITTING
 end
 
-function Player:draw()
+function Player:draw(_camera)
    spr(sprites.PLAYER, 15 * 8, (8*8) + SCREEN_YOFFSET, 0)
 
 --   spr(sprites.PLAYER, self.x * 8, SCREEN_YOFFSET + (self.y * 8), 0)
@@ -234,8 +234,22 @@ function Player:can_work(t)
 end
 
 Coworker = Actor:new()
-function Coworker:draw()
-   circ(self.x, self.y, 5, 1)
+function Coworker:new(sprite, opts)
+   o = {
+      sprite = sprite,
+      x = opts.x,
+      y = opts.y,
+      direction = self.LEFT,
+      paths = opts.paths,
+   }
+   setmetatable(o, self)
+   self.__index = self
+   return o
+end
+
+function Coworker:draw(camera)
+   local lx, ly = camera.x - self.x, camera.y - self.y
+   spr(self.sprite, (15*8) - (8*lx), (8*8) - (8*ly) + SCREEN_YOFFSET, 0)
 end
 
 HUD = {}
@@ -261,6 +275,8 @@ function HUD:update_messages(ap)
          if msg.cb then
             msg.cb()
          end
+         -- reset text_i for reuse.
+         msg.text_i = 1
          table.remove(self.messages, 1)
       else
          msg.text_i = msg.text_i + 3
@@ -268,7 +284,7 @@ function HUD:update_messages(ap)
    end
 end
 
-function HUD:draw()
+function HUD:draw(_camera)
    -- draw the can work indicator.
    _, problem = self.jobs:work_problem(self.clock.time, self.player)
    spr(problem, 1, 1, 0)
@@ -292,8 +308,8 @@ function HUD:draw()
    print(desc, 45, 2, 11)
 
    -- progress bar.
-   rectb(110, 1, 84, 8, 12)
-   rect(112, 3, math.floor(perc * 80), 4, 6)
+   rectb(133, 1, 61, 8, 12)
+   rect(135, 3, math.floor(perc * 59), 4, 6)
 
    -- draw the clock
    local hours = self.clock:hour()
@@ -304,7 +320,7 @@ function HUD:draw()
       colon = " "
    end
 
-   print(zeropad(math.floor(hours)) .. colon .. zeropad(math.floor(minutes)), 200, 2, 11)
+   print(zeropad(math.floor(hours)) .. colon .. zeropad(math.floor(minutes)), 197, 2, 11, true)
 
    -- draw the signal indicator.
    spr(sprites.WIFI+self.signal, 230, 1, 0)
@@ -324,7 +340,7 @@ function HUD:draw()
 end
 
 function HUD:add_message(s)
-
+   table.insert(self.messages, s)
 end
 
 function HUD:update_signal(s)
@@ -349,13 +365,14 @@ function Jobs:new()
    return o
 end
 
-function Jobs:add(desc, magnitude, opts)
+function Jobs:add(desc, magnitude, typ, opts)
    job = {}
    opts = opts or {}
    for k, v in pairs(opts) do
       job[k] = v
    end
    job.desc = desc
+   job.typ = typ
    job.goal= magnitude
    job.progress = 0
    job.next_tick = 0
@@ -369,12 +386,10 @@ end
 
 -- rotates through the list of jobs.
 function Jobs:next()
-   trace(self.index)
    self.index = self.index + 1
    if self.index > #self.jobs then
       self.index = 1
    end
-   trace("after: " .. self.index)
 end
 
 function Jobs:work_problem(t, p)
@@ -399,8 +414,8 @@ function Jobs:work_problem(t, p)
 
    -- now, can the job be performed by the player at this point?
    -- time restriction?
-   if job.min_t and job.max_t and
-   t < job.min_t and t > job.max_t then
+   if (job.min_t and job.max_t) and
+   (t < job.min_t or t > job.max_t) then
       return false, sprites.JOB_TIME
    end
 
@@ -445,15 +460,16 @@ function Jobs:work(t, p)
 end
 
 function Jobs:complete()
-   table.insert(self.completed, self.jobs[self.index])
-   self.jobs[self.index] = nil
+   local thejob = self.jobs[self.index]
 
-   -- copy all the remaining jobs into a new table
-   local jobs = {}
-   for _, v in pairs(self.jobs) do
-      table.insert(jobs, v)
+   table.insert(self.completed, self.jobs[self.index])
+   table.remove(self.jobs, self.index)
+
+   -- now, call thejob.cb if it exists
+   if thejob.cb then
+      thejob.cb()
    end
-   self.jobs = jobs
+
    self.index = #self.jobs
 end
 
@@ -476,15 +492,16 @@ function Jobs:update_signal(s)
 end
 
 function Jobs:expire(t)
-   local jobs = {}
-   for _, v in pairs(self.jobs) do
+   for i, v in pairs(self.jobs) do
       if v.max_t and t > v.max_t then
          table.insert(self.expired, v)
-      else
-         table.insert(jobs, v)
+         table.remove(self.jobs, i)
+
+         if v.expire_cb then
+            v.expire_cb()
+         end
       end
    end
-   self.jobs = jobs
    if self.index > #self.jobs then
       self.index = #self.jobs
    end
@@ -587,7 +604,7 @@ function Mode:next()
    return TitleScreen:new()
 end
 
-function Mode:draw()
+function Mode:draw(_camera)
 end
 
 function Mode:update(button_state, t)
@@ -604,87 +621,218 @@ function Game:new(clock, aps)
    local jobs = Jobs:new()
 
    local notifications = {
-      -- Town hall.. 09:30 (30-45 minutes)
+      -- Town hall.. 09:30 (60 minutes)
       -- Weekly Town Hall. Have questions? We have answers. Post your questions to the "All Hands" Babbler feed.
+      {
+         due = (CLOCK_TICKS_PER_HOUR / 2) - (CLOCK_TICKS_PER_HOUR / 6),
+         sprite = sprites.ICON_CALENDAR_INVITE,
+         text = fill(FILL_COLUMN, "Weekly Town Hall at 09:30. Have questions? We have answers. Post your questions to the \"All Hands\" Babbler feed."),
+         text_i = 1,
+         cb = function()
+            local opts = copy(town_hall_boundaries)
+            opts.no_wifi = true
+            opts.min_t = CLOCK_TICKS_PER_HOUR / 2
+            opts.max_t = (CLOCK_TICKS_PER_HOUR / 2) + CLOCK_TICKS_PER_HOUR
+            jobs:add("Town Hall", 30, "Meetings", opts)
+         end,
+      },
 
       -- Morning Snack.. 10:30
       -- Morning snack is here for you!
+
+      {
+         due = (CLOCK_TICKS_PER_HOUR / 2) + CLOCK_TICKS_PER_HOUR,
+         sprite = sprites.ICON_CALENDAR_INVITE,
+         text = fill(FILL_COLUMN, "Morning snack is here for you!"),
+         text_i = 1,
+         cb = function()
+            local opts = copy(bathroom_boundaries)
+            opts.no_wifi = true
+            opts.min_t = (CLOCK_TICKS_PER_HOUR / 2) + CLOCK_TICKS_PER_HOUR
+            opts.max_t = CLOCK_TICKS_PER_HOUR * 3
+            opts.cb = function()
+               local opts = copy(kitchen_prep_boundaries)
+               opts.no_wifi = true
+               opts.min_t = (CLOCK_TICKS_PER_HOUR / 2) + CLOCK_TICKS_PER_HOUR
+               opts.max_t = CLOCK_TICKS_PER_HOUR * 3
+               opts.requires = "M. Snack Wash"
+               opts.cb = function()
+                  local opts = copy(kitchen_boundaries)
+                  opts.no_wifi = true
+                  opts.min_t = (CLOCK_TICKS_PER_HOUR / 2) + CLOCK_TICKS_PER_HOUR
+                  opts.max_t = CLOCK_TICKS_PER_HOUR * 3
+                  opts.requires = "Prep M. Snack"
+                  jobs:add("Eat M. Snack", 3, "Eating", opts)
+               end
+               jobs:add("Prep M. Snack", 2, "Eating", opts)
+            end
+            jobs:add("M. Snack Wash", 1, "Eating", opts)
+         end,
+      },
+
+      -- Support ticket at 13:15 (should take a random amount of time.)
+      -- "Seeing weird things while trying to use Shoulda Queues" was assigned to you.
+      {
+         due =  math.floor(CLOCK_TICKS_PER_HOUR * 1.8),
+         sprite = sprites.ICON_PERSON_BLUE,
+         text = fill(FILL_COLUMN, "\"Seeing weird things while trying to use Shoulda Queues\" was assigned to you."),
+         text_i = 1,
+         cb = function()
+            jobs:add("Support ticket", 18, "Interruptions", opts)
+         end,
+      },
 
       -- Kickoff Meeting.. 11:00
       -- Project Surefire Kickoff Meeting. I know this isn't a great time for everyone, but we need to get together and figure out how to proceed with the Surefire Project. What are our risks? What's our opportunity? Thanks!
          -- Needs to add a few more issues.
 
+      {
+         due = math.floor((CLOCK_TICKS_PER_HOUR * 2) - (CLOCK_TICKS_PER_HOUR / 6)),
+         sprite = sprites.ICON_CALENDAR_INVITE,
+         text = fill(FILL_COLUMN, "Project Surefire Kickoff Meeting 11:00. I know this isn't a great time for everyone, but we need to get together and figure out how to proceed with the Surefire Project. What are our risks? What's our opportunity? Thanks!"),
+         text_i = 1,
+         cb = function()
+            local opts = copy(lower_conference_1)
+            opts.min_t = CLOCK_TICKS_PER_HOUR * 2
+            opts.max_t = CLOCK_TICKS_PER_HOUR * 3
+            opts.cb = function()
+               jobs:add("Surefire Design", 40, "Project Surefire")
+               jobs:add("Surefire Proto", 50, "Project Surefire", {requires = "Surefire Design"})
+            end
+            opts.expire_cb = function()
+               jobs:add("Surefire Req Rev", 60, "Project Surefire")
+               jobs:add("Surefire Design", 40, "Project Surefire",  {requires = "Surefire Req Rev"})
+               jobs:add("Surefire Proto", 60, "Project Surefire", {requires = "Surefire Design"})
+            end
+            jobs:add("Surefire Kickoff", 30, "Project Surefire", opts)
+         end,
+      },
+
       -- Lunch.. Noon. (25 minutes)
       -- Catered by Tacolicious Crepes. The menu today is Kale Salad and deconstructed Gazpacho.
 
+      {
+         due = math.floor((CLOCK_TICKS_PER_HOUR * 3) - (CLOCK_TICKS_PER_HOUR / 6)),
+         sprite = sprites.ICON_CALENDAR_INVITE,
+         text = fill(FILL_COLUMN, "Lunch at 12:00. Catered by Tacolicious Crepes. The menu today is Kale Salda and deconstructed Gazpacho."),
+         text_i = 1,
+         cb = function()
+            local opts = copy(bathroom_boundaries)
+            opts.no_wifi = true
+            opts.min_t = CLOCK_TICKS_PER_HOUR * 3
+            opts.max_t = CLOCK_TICKS_PER_HOUR * 4
+            opts.cb = function()
+               local opts = copy(kitchen_prep_boundaries)
+               opts.no_wifi = true
+               opts.min_t = CLOCK_TICKS_PER_HOUR * 3
+               opts.max_t = CLOCK_TICKS_PER_HOUR * 4
+               opts.requires = "Lunch Wash"
+               opts.cb = function()
+                  local opts = copy(kitchen_boundaries)
+                  opts.no_wifi = true
+                  opts.min_t = CLOCK_TICKS_PER_HOUR * 3
+                  opts.max_t = CLOCK_TICKS_PER_HOUR * 4
+                  opts.requires = "Prep M. Snack"
+                  jobs:add("Eat Lunch", 3, "Eating", opts)
+               end
+               jobs:add("Prep Lunch", 2, "Eating", opts)
+            end
+            jobs:add("Lunch Wash", 1, "Eating", opts)
+         end,
+      },
+
       -- Manager 1:1 13:00 (30 minutes)
+      {
+         due =  math.floor((CLOCK_TICKS_PER_HOUR * 4) - (CLOCK_TICKS_PER_HOUR / 6)),
+         sprite = sprites.ICON_CALENDAR_INVITE,
+         text = fill(FILL_COLUMN, "Manager 1:1 -- 13:00 -- Conference Room 1"),
+         text_i = 1,
+         cb = function()
+            local opts = copy(right_conference)
+            opts.no_wifi = true
+            opts.min_t = CLOCK_TICKS_PER_HOUR * 4
+            opts.max_t = (CLOCK_TICKS_PER_HOUR * 4) + (CLOCK_TICKS_PER_HOUR / 2)
+            jobs:add("Manager 1:1", 15, "Meetings", opts)
+         end,
+      },
 
-      -- Support ticket at 13:15 (should take a random amount of time.)
-      -- "Seeing weird things while trying to use Shoulda Queues" was assigned to you.
-
-      -- Afternoon snack .. 14:30
+      -- Afternoon snack .. 15:15
       -- Afternoon snack!
+      {
+         due = math.floor((CLOCK_TICKS_PER_HOUR / 4) + CLOCK_TICKS_PER_HOUR * 6),
+         sprite = sprites.ICON_PERSON_GREYN,
+         text = fill(FILL_COLUMN, "Hillary brought back some cookies from her trip! They're in the kitchen now!"),
+         text_i = 1,
+         cb = function()
+            local opts = copy(bathroom_boundaries)
+            opts.no_wifi = true
+            opts.cb = function()
+               local opts = copy(kitchen_prep_boundaries)
+               opts.no_wifi = true
+               opts.requires = "A. Snack Wash"
+               opts.cb = function()
+                  local opts = copy(kitchen_boundaries)
+                  opts.no_wifi = true
+                  opts.requires = "Prep A. Snack"
+                  jobs:add("Eat A. Snack", 3, "Eating", opts)
+               end
+               jobs:add("Prep A. Snack", 2, "Eating", opts)
+            end
+            jobs:add("A. Snack Wash", 1, "Eating", opts)
+         end,
+      },
+
+      {
+         due =  math.floor((CLOCK_TICKS_PER_HOUR * 6) + (CLOCK_TICKS_PER_HOUR / 6)),
+         sprite = sprites.ICON_PERSON_GREYN,
+         text = fill(FILL_COLUMN, "[OFFICE] WIFI is down on the east side of the building. We'll let you know what it's back up."),
+         text_i = 1,
+         cb = function()
+            for _, ap in pairs(self.aps) do
+               if ap.x >= 40 then
+                  ap.live = false
+               end
+            end
+         end,
+      },
 
       -- Manager bug .. 15:54 --
       -- Hey. I just had a 1:1 with Julien and he mentioned some weird behavior in the soft queue that you worked on 4 years ago. Anyway, I told him you'd take a look. Shouldn't take too long. I'd really appreciate it.
 
+      {
+         due =  math.floor((CLOCK_TICKS_PER_HOUR * 6) + (CLOCK_TICKS_PER_HOUR / 3)),
+         sprite = sprites.ICON_PERSON_GREEN,
+         text = fill(FILL_COLUMN, "Hey! I just had a 1:1 with Julien and he mentioned some weird behavior in the soft queue that you worked on, maybe 4 years ago?. Anyway, I told him you'd take a look. Shouldn't take too long. I'd really appreciate it!"),
+         text_i = 1,
+         cb = function()
+            jobs:add("Help Julien", 23, "Interruptions", opts)
+         end,
+      },
+
       -- Paged at 16:34
       -- "DOWN: Toldya is down since 16:29 -- 500 Internal Server Error on shoulda.seen.it.coming"
+
+      {
+         due =  math.floor((CLOCK_TICKS_PER_HOUR * 7) + (CLOCK_TICKS_PER_HOUR / 1.9)),
+         sprite = sprites.ICON_BEEPER_NOTICE,
+         text = fill(FILL_COLUMN, "DOWN: Toldya is down since 16:29 -- 500 Internal Server Error on shoulda.seen.it.coming"),
+         text_i = 1,
+         cb = function()
+            jobs:add("INCIDENT RESPONSE", "Interruptions", 7)
+         end,
+      },
    }
 
    -- standard jobs.
-   jobs:add("issue #542", 5)
-   jobs:add("issue #547", 8, {requires = "issue #542"})
+   jobs:add("Feature MS #1", 35, "Features")
+   jobs:add("Feature MS #2", 30, "Features", {requires = "Feature MS #1"})
 
    local copier_opts = copy(copier_boundaries)
    copier_opts.no_wifi = true
-   jobs:add("copy docs", 2, copier_opts)
-
-   jobs:add("scan expenses", 2, copier_opts)
-   jobs:add("file expenses", { requires = "scan expenses" })
-
-   -- EATING
-
-   -- TODO: time requirement
-   local wash_opts = copy(bathroom_boundaries)
-   wash_opts.no_wifi = true
-   jobs:add("lunch wash", 1, wash_opts)
-
-   -- TODO: time requirement
-   local prep_opts = copy(kitchen_prep_boundaries)
-   prep_opts.no_wifi = true
-   prep_opts.requires = "lunch wash"
-   jobs:add("lunch prep", 2, prep_opts)
-
-   -- TODO: time requirement
-   local lunch_opts = copy(kitchen_boundaries)
-   lunch_opts.no_wifi = true
-   lunch_opts.requires = "lunch prep"
-   jobs:add("lunch", 4, lunch_opts)
-
-   -- TODO: time requirement
-   wash_opts = copy(bathroom_boundaries)
-   wash_opts.no_wifi = true
-   jobs:add("snack wash", 1, wash_opts)
-
-   -- TODO: time requirement
-   prep_opts = copy(kitchen_prep_boundaries)
-   prep_opts.no_wifi = true
-   prep_opts.requires = "snack wash"
-   jobs:add("snack prep", 1, prep_opts)
-
-   -- TODO: time requirement
-   local snack_opts = copy(kitchen_boundaries)
-   snack_opts.no_wifi = true
-   snack_opts.requires = "snack prep"
-   jobs:add("snack", 2, snack_opts)
-
-   -- MEETINGS
-   -- TODO: time requirement
-   local th_opts = copy(town_hall_boundaries)
-   th_opts.no_wifi = true
-   jobs:add("town hall", 30, th_opts)
-
+   copier_opts.cb = function()
+      jobs:add("File Expenses", 2, "Administrivia", { requires = "Scan Expenses" })
+   end
+   jobs:add("Scan Expenses", 2, "Administrivia", copier_opts)
 
    local player = Player:new(2, 2)
    o = {
@@ -692,6 +840,18 @@ function Game:new(clock, aps)
       jobs = jobs,
       clock = clock,
       aps = aps,
+      coworkers = {
+         Coworker:new(sprites.COWORKER_1, {x = 7, y = 8}),
+         Coworker:new(sprites.COWORKER_2, {x = 17, y = 2}),
+         Coworker:new(sprites.COWORKER_3, {x = 25, y = 4}),
+         Coworker:new(sprites.COWORKER_4, {x = 11, y = 6}),
+         Coworker:new(sprites.COWORKER_2, {x = 37, y = 12}),
+         Coworker:new(sprites.COWORKER_2, {x = 37, y = 12}),
+         Coworker:new(sprites.COWORKER_4, {x = 37, y = 12}),
+         Coworker:new(sprites.COWORKER_2, {x = 55, y = 3}),
+         Coworker:new(sprites.COWORKER_1, {x = 54, y = 17}),
+      },
+      notifications = notifications,
       hud = HUD:new(clock, jobs, player),
    }
 
@@ -702,22 +862,28 @@ end
 
 function Game:update(button_state, t)
    -- if the clock is at CLOCK_END_HOUR, then... we've gotta prepare to be done.
-   if self.clock:hour() == CLOCK_END_HOUR then
+   if self.clock.time > (CLOCK_TICKS_PER_HOUR * 8) then
       self.game_over = true
-      -- prepare for game over.
+      return
    end
 
-   if not self.hud:paused() or self.paused then
+   if not self.hud:paused() and not self.paused then
       self.clock:update(t)
       self:update_player(button_state, self.clock.time)
+
+      if #self.notifications > 0 and self.notifications[1].due == self.clock.time then
+         self.hud:add_message(self.notifications[1])
+         table.remove(self.notifications, 1)
+      end
+
+      -- Compute new signal strength
+      local signal = wifi_quality(wifi_distance(self.aps, self.player.x, self.player.y))
+      self.jobs:expire(self.clock.time)
+      self.jobs:update_signal(signal)
+      self.hud:update_signal(signal)
    end
 
-   -- Compute new signal strength
-   signal = wifi_quality(wifi_distance(self.aps, self.player.x, self.player.y))
    self.hud:update_messages(button_state.AP)
-   self.hud:update_signal(signal)
-   self.jobs:update_signal(signal)
-   self.jobs:expire(self.clock.time)
 end
 
 function Game:update_player(button_state, t)
@@ -749,8 +915,7 @@ function Game:update_player(button_state, t)
       newy = y + 1
    end
 
-   local iswall = fget(mget(newx, newy), flags.WALL)
-   if not iswall then
+   if self:oktomove(newx, newy) then
       self.player.x = newx
       self.player.y = newy
    end
@@ -763,6 +928,19 @@ function Game:update_player(button_state, t)
    end
 end
 
+function Game:oktomove(x, y)
+   return not (self:occupied(x, y) or fget(mget(x, y), flags.WALL))
+end
+
+function Game:occupied(x, y)
+   for _, c in pairs(self.coworkers) do
+      if c.x == x and c.y == y then
+         return true
+      end
+   end
+   return false
+end
+
 function Game:done()
    return self.game_over
 end
@@ -771,11 +949,12 @@ function Game:next()
    return PerformanceEvaluation:new(self.jobs, self.player)
 end
 
-function Game:draw()
+function Game:draw(_camera)
    map(self.player.x-15, self.player.y-8, 28, 15, 0, SCREEN_YOFFSET)
-   self.player:draw()
-
-
+   self.player:draw({})
+   for _, c in pairs(self.coworkers) do
+      c:draw(self.player)
+   end
 end
 
 function Game:draw_hud()
@@ -820,17 +999,74 @@ end
 
 function TitleScreen:next()
    local clock = Clock:new(CLOCK_TICKS_PER_HOUR, CLOCK_START_HOUR)
+
+   -- START TIME.. DEBUG
+   --  clock.time = CLOCK_TICKS_PER_HOUR * 7
    return Game:new(clock, ACCESS_POINTS)
+end
+
+status = {
+   COMPLETED = {
+      color = 6,
+      text = "COMPLETED",
+   },
+   ON_TRACK = {
+      color = 5,
+      text = "ON TRACK",
+   },
+   BEHIND = {
+      color = 4,
+      text= "BEHIND",
+   },
+   FAILING = {
+      color = 2,
+      text = "FAILING",
+   },
+
+}
+
+function evaluate(jobs, typ)
+   local progress, total = 0, 0
+   for _, c in pairs({jobs.completed, jobs.expired, jobs.jobs}) do
+      for _, j in pairs(c) do
+         if j.typ == typ then
+            progress = progress + j.progress
+            total = total + j.goal
+         end
+      end
+   end
+
+   perc = progress / total
+   if perc >= 1 then
+      return status.COMPLETED
+   elseif perc > .75 then
+      return status.ON_TRACK
+   elseif perc > .3 then
+      return status.BEHIND
+   else
+      return status.FAILING
+   end
 end
 
 
 PerformanceEvaluation = Mode:new()
 function PerformanceEvaluation:new(jobs, player)
+   e = {
+      ["Feature Work"] = evaluate(jobs, "Features"),
+      ["Eating"] = evaluate(jobs, "Eating"),
+      ["Meetings"] = evaluate(jobs, "Meetings"),
+      ["Interruptions"] = evaluate(jobs, "Interruptions"),
+      ["Administrivia"] = evaluate(jobs, "Administrivia"),
+      ["Project Surefire"] = evaluate(jobs, "Project Surefire"),
+   }
+
    o = {
       jobs = jobs,
       player = player,
       escaped = false,
+      evaluation = e,
    }
+
    setmetatable(o, self)
    self.__index = self
    return o
@@ -852,28 +1088,37 @@ function PerformanceEvaluation:update(button_state, t)
 end
 
 function PerformanceEvaluation:draw()
-   for i, j in pairs(self.jobs.jobs) do
-      print("SCORE", 0, 0)
+   print("Performance Evaluation", 60, 5, 12)
+   i = 1
+   spr(sprites.ICON_PERSON_GREEN, 30, 16, -1, 1, 0, 0, 2, 2)
+   print("\"We value your contributions.", 50, 18, 12)
+   print("You'll be promoted in no time!\"", 50, 25, 12)
+
+   print("Feedback:", 30, 40, 12)
+   for k, v in pairs(self.evaluation) do
+      print(k, 40, 40 + i*12, 12)
+      print(v.text, 150, 40 + i*12, v.color)
+      i = i + 1
    end
+
 end
 
-
-
 credits_body = {
-   "Game by APG",
-   "Written by APG",
-   "Graphics by APG",
-   "Sound by APG",
-   "Original concepts by APG",
+   "APG made this.",
    "",
-   "With Special Thanks to Heroku",
-   "     ... and Salesforce",
-   "Alex Arnell",
-   "Edward Muller",
-   "Phil Hagelberg",
-   "Peter Baker"
+   "Thanks to everyone at Heroku,",
+   "and Salesforce for making this past",
+   "6 years amazing! I'll miss you all!",
+   "",
+   "email: me@apgwoz.com",
+   "twitter: @apgwoz",
+   "web: http://apgwoz.com",
+   "",
+   "Special shout out to my",
+   "original Heroku team,",
+   "Telemetry, which no longer"
+   ", and my final team, SETI.",
 }
-
 
 Credits = Mode:new()
 function Credits:new()
@@ -1110,7 +1355,7 @@ end
 -- </TRACKS>
 
 -- <FLAGS>
--- 000:00202020202020000000000000000000202020202020205050400000000000001010105010502000000000000000000020602000000000000000000000000000202020200000000000000000000000000020202020202020000000000000000000282000002000000000000000000000404040400000000000000000000000004040404000000000000000000000000040000000000000000000000000000000404040000000000000000000000000000000000000000000000000000000000020400000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000020201010100000000000000000000000
+-- 000:00202020202020000000000000000000202020202020205050400000000000001010105010502000000000000000000020202020200000000000000000000000202020200000000000000000000000002020202020202020000000000000000020282020202020200000000000000000404040400000000000000000000000004040404000000000000000000000000040000000000000000000000000000000404040000000000000000000000000000000000000000000000000000000000020400000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000020201010100000000000000000000000
 -- </FLAGS>
 
 -- <PALETTE>
