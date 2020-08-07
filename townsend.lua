@@ -471,6 +471,8 @@ function Jobs:complete()
    end
 
    self.index = #self.jobs
+
+   sfx(12, "E-5", 30)
 end
 
 function Jobs:update_next_tick(t)
@@ -492,11 +494,12 @@ function Jobs:update_signal(s)
 end
 
 function Jobs:expire(t)
+   local did = false
    for i, v in pairs(self.jobs) do
       if v.max_t and t > v.max_t then
          table.insert(self.expired, v)
          table.remove(self.jobs, i)
-
+         did = true
          if v.expire_cb then
             v.expire_cb()
          end
@@ -505,6 +508,11 @@ function Jobs:expire(t)
    if self.index > #self.jobs then
       self.index = #self.jobs
    end
+
+   if did then
+      sfx(13, "C-2", 30)
+   end
+
 end
 
 -- Clock is a drawn as HUD element, in the top of the screen.
@@ -545,7 +553,7 @@ end
 
 function wifi_distance(aps, x, y)
    local best = 1000000
-   for _, ap in ipairs(aps) do
+   for _, ap in pairs(aps) do
       if ap.alive then
          local dx = ap.x - x
          local dy = ap.y - y
@@ -619,6 +627,8 @@ end
 Game = Mode:new()
 function Game:new(clock, aps)
    local jobs = Jobs:new()
+   local aps = aps
+   local clock = clock
 
    local notifications = {
       -- Town hall.. 09:30 (60 minutes)
@@ -704,7 +714,7 @@ function Game:new(clock, aps)
                jobs:add("Surefire Design", 40, "Project Surefire",  {requires = "Surefire Req Rev"})
                jobs:add("Surefire Proto", 60, "Project Surefire", {requires = "Surefire Design"})
             end
-            jobs:add("Surefire Kickoff", 30, "Project Surefire", opts)
+            jobs:add("Surefire Kickoff", 20, "Project Surefire", opts)
          end,
       },
 
@@ -756,6 +766,20 @@ function Game:new(clock, aps)
          end,
       },
 
+      {
+         due =  math.floor((CLOCK_TICKS_PER_HOUR * 5) + (11 * 60)),
+         sprite = sprites.ICON_PERSON_GREYN,
+         text = fill(FILL_COLUMN, "[OFFICE] WIFI is down on the east side of the building. We'll let you know what it's back up."),
+         text_i = 1,
+         cb = function()
+            for i, ap in pairs(aps) do
+               if ap.x >= 40 then
+                  table.remove(aps, i)
+               end
+            end
+         end,
+      },
+
       -- Afternoon snack .. 15:15
       -- Afternoon snack!
       {
@@ -782,19 +806,6 @@ function Game:new(clock, aps)
          end,
       },
 
-      {
-         due =  math.floor((CLOCK_TICKS_PER_HOUR * 6) + (CLOCK_TICKS_PER_HOUR / 6)),
-         sprite = sprites.ICON_PERSON_GREYN,
-         text = fill(FILL_COLUMN, "[OFFICE] WIFI is down on the east side of the building. We'll let you know what it's back up."),
-         text_i = 1,
-         cb = function()
-            for _, ap in pairs(self.aps) do
-               if ap.x >= 40 then
-                  ap.live = false
-               end
-            end
-         end,
-      },
 
       -- Manager bug .. 15:54 --
       -- Hey. I just had a 1:1 with Julien and he mentioned some weird behavior in the soft queue that you worked on 4 years ago. Anyway, I told him you'd take a look. Shouldn't take too long. I'd really appreciate it.
@@ -818,7 +829,7 @@ function Game:new(clock, aps)
          text = fill(FILL_COLUMN, "DOWN: Toldya is down since 16:29 -- 500 Internal Server Error on shoulda.seen.it.coming"),
          text_i = 1,
          cb = function()
-            jobs:add("INCIDENT RESPONSE", "Interruptions", 7)
+            jobs:add("INCIDENT RESPONSE", 7, "Interruptions")
          end,
       },
    }
@@ -1110,14 +1121,14 @@ credits_body = {
    "and Salesforce for making this past",
    "6 years amazing! I'll miss you all!",
    "",
-   "email: me@apgwoz.com",
    "twitter: @apgwoz",
    "web: http://apgwoz.com",
    "",
    "Special shout out to my",
    "original Heroku team,",
-   "Telemetry, which no longer"
-   ", and my final team, SETI.",
+   "Telemetry, which no longer",
+   "exists, and my final team,",
+   "SETI.",
 }
 
 Credits = Mode:new()
@@ -1341,17 +1352,19 @@ end
 -- </WAVES>
 
 -- <SFX>
--- 000:020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200c04000000000
--- 001:020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200000000000000
+-- 000:b100b100b100a1009100910091008100810081008100810091009100a100a100b100b100b100b100b100b100b100b100b100b100b100b100b100b100c05000000000
+-- 001:f0009000900090009000a000a000a000a000b000b000b000b000b000b000b000b000a000a0009000a000a000b000c000c000d000e000e000e000e000300000000000
+-- 002:910011001100210031004100410041004100410031002100010011005100510061008100a10021003100510061007100810091009100a100a100a100404000000000
+-- 012:310031003100410041004100410051005100510061006100610061006100610071007100710081008100810081007100510041003100310021002100404000000000
+-- 013:0000100010002000200020000000300040005000600060007000800090009000a000a000b000b000c000c000d000e000f000f000f000f000f000f000100000000000
 -- </SFX>
 
 -- <PATTERNS>
 -- 000:000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000100000100000100000100000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
--- 001:000000900024100000100000100000d00024000000000000000000000000000000100020100000100000100000100000100000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 -- </PATTERNS>
 
 -- <TRACKS>
--- 000:10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e200
+-- 000:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e200
 -- </TRACKS>
 
 -- <FLAGS>
@@ -1361,3 +1374,4 @@ end
 -- <PALETTE>
 -- 000:1a1c2c5d275db13e53ef7d57ffca89a7f07038b76425717929366f3b5dc941a6f673eff7f4f4f494b0c2566c86333c57
 -- </PALETTE>
+
