@@ -3,7 +3,7 @@
 -- desc:   Get Work Done
 -- script: lua
 
-t = 3600 * 7
+t = 0
 
 -- number of tiles wifi can reach.
 WIFI_RANGE = 10
